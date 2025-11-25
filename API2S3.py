@@ -5,7 +5,7 @@ import boto3
 from datetime import datetime
 
 # 这个Lambda不再需要mysql.connector库，因此移除相关import 
-# API到S3
+# Source 到 ODS
 
 def lambda_handler(event, context):
     print(f"=== Lambda execution started (RequestId: {context.aws_request_id}) ===")
