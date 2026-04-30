@@ -1,5 +1,9 @@
 # CloudETLResim
 
+CloudETLResim is a source-code reconstruction of a production-style AWS serverless ETL workflow. 
+It models an API -> S3 -> RDS pipeline using Lambda, versioned S3 raw partitions, schema validation, retry/cooldown handling, simulated monitoring hooks, lineage via run_id, explicit MySQL upsert, conflict auditing, and bad-record capture. 
+AWS deployment assets such as Step Functions, Lambda Layers, IAM, Secrets Manager, CloudWatch alarms, and database migrations are managed outside this repository.
+
 A source-only reconstruction of a small AWS serverless ETL workflow.
 
 This project simulates a previous cloud ETL flow with a smaller public dataset:
