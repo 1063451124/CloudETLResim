@@ -16,8 +16,8 @@ Alpha Vantage API
 
 This repository intentionally contains only Lambda source code and project notes.
 
-The following production resources are assumed to be managed in AWS deployment,
-not committed in this repository:
+The following production resources are assumed to be managed in AWS deployment
+or database migration tooling, not committed in this repository:
 
 - Lambda runtime configuration
 - Lambda Layer / dependency package
@@ -29,6 +29,7 @@ not committed in this repository:
 - CloudWatch alarms and dashboards
 - Secrets Manager entries
 - CI/CD and infrastructure-as-code definitions
+- Database schema/migration for `stock_prices`, `etl_load_audit`, and `etl_bad_records`
 
 This is a reconstruction/demo of an older project, not a full production platform repository.
 
@@ -72,26 +73,18 @@ The versioned path is deliberate. It avoids overwriting `latest_data.json` and a
 
 ## Target Table Assumption
 
-The upsert path assumes `stock_prices` has a unique key on `(symbol, date)`.
+The RDS schema is assumed to exist because database creation/migration is managed
+outside this source-only repository.
 
-Example table shape:
+The upsert path assumes:
 
-```sql
-CREATE TABLE stock_prices (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    symbol VARCHAR(32) NOT NULL,
-    date DATE NOT NULL,
-    open DECIMAL(18, 6) NOT NULL,
-    high DECIMAL(18, 6) NOT NULL,
-    low DECIMAL(18, 6) NOT NULL,
-    close DECIMAL(18, 6) NOT NULL,
-    volume BIGINT NOT NULL,
-    last_run_id VARCHAR(64) NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_stock_symbol_date (symbol, date)
-);
-```
+- `stock_prices` exists.
+- `stock_prices` has a unique key on `(symbol, date)`.
+- `stock_prices` has writable columns for `last_run_id` and `updated_at`.
+- `etl_load_audit` exists for successful/failed load summaries.
+- `etl_bad_records` exists for validation failure capture.
+
+No runtime DDL is performed by the Lambda functions.
 
 ## Upsert Strategy
 
@@ -236,6 +229,21 @@ Why orchestration matters:
 
 This repository does not include the Step Functions definition because AWS deployment is assumed to be managed outside the source-only reconstruction.
 
+## Failure Contract
+
+The Lambda functions are intended for Step Functions-style orchestration.
+
+By default, failed execution raises an exception after logging and simulated monitoring.
+This allows the state machine `Retry` / `Catch` policy to classify the state as failed.
+
+For local testing or API-Gateway-style response simulation, set:
+
+```text
+FAILURE_MODE=response
+```
+
+In that mode, the Lambda returns a `{ "statusCode": 500, ... }` payload instead of raising.
+
 ## Backfill and Replay
 
 Because S3 now uses versioned partition paths, replay does not require refetching the API.
@@ -264,6 +272,7 @@ A separate backfill/replay script can enumerate historical S3 keys and invoke th
 | `RETRY_ATTEMPTS` | Both | Retry attempts, defaults to `3` |
 | `RETRY_COOLDOWN_SECONDS` | Both | Base cooldown seconds, defaults to `2` |
 | `INTERNAL_MONITORING_API_URL` | Both | Optional simulated monitoring endpoint |
+| `FAILURE_MODE` | Both | Defaults to `raise` for Step Functions; use `response` for local/API-style simulation |
 | `RDS_HOST` | `AWS_S3toRDS.py` | RDS host |
 | `RDS_USER` | `AWS_S3toRDS.py` | RDS user |
 | `RDS_PASSWORD` | `AWS_S3toRDS.py` | RDS password; in real deployment this should be Secrets Manager-backed |
