@@ -209,45 +209,9 @@ def validate_stock_payload(stock_data):
     return normalized_rows
 
 
-def ensure_audit_tables(cursor):
-    """
-    Lightweight audit tables.
-
-    These are included to make conflict and failure records explicit.
-    In a stricter production setup, table DDL would be managed by migration tooling.
-    """
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS etl_load_audit (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            run_id VARCHAR(64) NOT NULL,
-            symbol VARCHAR(32) NOT NULL,
-            source_bucket VARCHAR(255) NOT NULL,
-            source_key VARCHAR(1024) NOT NULL,
-            status VARCHAR(32) NOT NULL,
-            record_count INT NOT NULL DEFAULT 0,
-            inserted_or_updated_count INT NOT NULL DEFAULT 0,
-            conflict_count INT NOT NULL DEFAULT 0,
-            error_message TEXT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS etl_bad_records (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            run_id VARCHAR(64) NOT NULL,
-            symbol VARCHAR(32) NOT NULL,
-            source_bucket VARCHAR(255) NOT NULL,
-            source_key VARCHAR(1024) NOT NULL,
-            record_payload JSON NULL,
-            error_message TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
+# Database schema note:
+# stock_prices, etl_load_audit, and etl_bad_records are assumed to exist.
+# In the original AWS deployment, schema creation/migration is managed outside this Lambda.
 
 
 def insert_audit_record(
@@ -340,8 +304,6 @@ def save_to_rds(stock_data, symbol, run_id, source_bucket, source_key):
         connection.autocommit = False
         cursor = connection.cursor()
 
-        ensure_audit_tables(cursor)
-
         # Count existing keys before upsert for explicit conflict audit.
         conflict_count = 0
         for row in rows:
@@ -411,7 +373,6 @@ def save_to_rds(stock_data, symbol, run_id, source_bucket, source_key):
     except ValueError as exc:
         if connection is not None and connection.is_connected() and cursor is not None:
             try:
-                ensure_audit_tables(cursor)
                 insert_bad_record(
                     cursor=cursor,
                     run_id=run_id,
@@ -475,10 +436,17 @@ def lambda_handler(event, context):
             "error": f"Missing required event key: {str(exc)}",
         }
         monitor_event("s3_to_rds_invalid_event", error_payload, level="ERROR")
-        return {
-            "statusCode": 400,
-            "body": json.dumps(error_payload),
-        }
+
+        # Step Functions contract:
+        # Raise by default so the state machine Retry/Catch policy sees this as a failed state.
+        # For local/API-Gateway-style demos, set FAILURE_MODE=response.
+        if os.getenv("FAILURE_MODE", "raise").lower() == "response":
+            return {
+                "statusCode": 400,
+                "body": json.dumps(error_payload),
+            }
+
+        raise ValueError(error_payload["error"])
 
     monitor_event(
         "s3_to_rds_started",
@@ -542,7 +510,13 @@ def lambda_handler(event, context):
         print(f"[ERROR] Lambda2 failed: {json.dumps(error_payload, default=str)}")
         monitor_event("s3_to_rds_failed", error_payload, level="ERROR")
 
-        return {
-            "statusCode": 500,
-            "body": json.dumps(error_payload, default=str),
-        }
+        # Step Functions contract:
+        # Raise by default so the state machine Retry/Catch policy sees this as a failed state.
+        # For local/API-Gateway-style demos, set FAILURE_MODE=response.
+        if os.getenv("FAILURE_MODE", "raise").lower() == "response":
+            return {
+                "statusCode": 500,
+                "body": json.dumps(error_payload, default=str),
+            }
+
+        raise
