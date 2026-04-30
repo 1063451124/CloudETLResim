@@ -332,7 +332,13 @@ def lambda_handler(event, context):
         print(f"[ERROR] Lambda execution failed: {json.dumps(error_payload)}")
         monitor_event("api_to_s3_failed", error_payload, level="ERROR")
 
-        return {
-            "statusCode": 500,
-            "body": json.dumps(error_payload),
-        }
+        # Step Functions contract:
+        # Raise by default so the state machine Retry/Catch policy sees this as a failed state.
+        # For local/API-Gateway-style demos, set FAILURE_MODE=response.
+        if os.getenv("FAILURE_MODE", "raise").lower() == "response":
+            return {
+                "statusCode": 500,
+                "body": json.dumps(error_payload),
+            }
+
+        raise
